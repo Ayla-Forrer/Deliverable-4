@@ -17,13 +17,15 @@
   */
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
-#include "main.h"
+#include "main.h"                 //incudes all the necessary header files for the project
 #include "usb_device.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
 #include "usbd_cdc_if.h"
+#include "scheduler.h"
+#include "ring_buffer.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -42,27 +44,41 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+I2C_HandleTypeDef hi2c1;            // I2C_handleTypeDef is a structure that contains the configuration information for the I2C module
+I2C_HandleTypeDef hi2c2;            // hi2c1 and hi2c2 are used to talk to the accelerometer and the gyroscope by using the I2C protocol
+DMA_HandleTypeDef hdma_i2c1_tx;     // declare the dma handle as an external variable so it can be used, improves speed and causes less cpu workload
+DMA_HandleTypeDef hdma_i2c1_rx;     // the I2C module to transfers data directly to and from memory without involving the cpu
 
 /* USER CODE BEGIN PV */
+/* Private variables */
+#define ADXL_ADDR   (0x53 << 1)     // address of the accelerometer, shifting 0x53 left by 1 gives 0xA6
+#define POWER_CTL   0x2D            // measurement used to turn on the sensor and set the measurement mode 
+#define DATAX0      0x32            // register where the data for the x axis is stored
 
+uint8_t init_data = 0x08;           // setting the measure bit 
+uint8_t raw_accel[6];               // array that stores the 6 data bytes from the sensor
+int16_t x_axis, y_axis, z_axis;     // variables to store the converted acceleration values
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
-void SystemClock_Config(void);
-static void MX_GPIO_Init(void);
+void SystemClock_Config(void);       // function that configures the system clock
+static void MX_GPIO_Init(void);      // function that initializes the GPIO pins
+static void MX_DMA_Init(void);       // function that initializes the DMA controller
+static void MX_I2C1_Init(void);      // functions that initializes the I2C1 and I2C2 peripheral
+static void MX_I2C2_Init(void);      
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-int _write(int file, char *ptr, int len)
+int _write(int file, char *ptr, int length)                      // this allows the user to also view the print data
 {
-  while(CDC_Transmit_FS((uint8_t*)ptr, len) == USBD_BUSY)
+  while(CDC_Transmit_FS((uint8_t*)ptr, length) == USBD_BUSY)
   {
-    HAL_Delay(1);
+    HAL_Delay(1);                                                 // if it is busy it waits to send the data
   }
-  return len;
+  return length;
 }
 /* USER CODE END 0 */
 
@@ -93,28 +109,34 @@ int main(void)
 
   /* USER CODE END SysInit */
 
-  /* Initialize all configured peripherals */
-  MX_GPIO_Init();
-  MX_USB_DEVICE_Init();
+  /* Initialize all configured *peripherals */
+  
+  MX_GPIO_Init();               // function that initializes the GPIO pins
+  MX_DMA_Init();                // function that initializes the DMA controller
+  MX_USB_DEVICE_Init();         // function that initializes the USB device
+  MX_I2C1_Init();               // function that initializes the I2C1 peripheral
+  MX_I2C2_Init();               // function that initializes the I2C2 peripheral 
+  
   /* USER CODE BEGIN 2 */
-
+  HAL_I2C_Mem_Write(&hi2c1, ADXL_ADDR, POWER_CTL, I2C_MEMADD_SIZE_8BIT, &init_data, 1, 100);     // turns accelerometer on and starts measuring acceleration data
+  HAL_Delay(10);                                                                                 // delay to allow the sensor to process the command
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+    task_one();
+    HAL_Delay(10);                   // Delay to allow for I2C communication and processing
+    task_two();
+    HAL_Delay(10);                   // Delay to allow for I2C communication and processing
+    task_three();
+    HAL_Delay(50);                   // Delay to allow for I2C communication and processing
+
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-  if (HAL_GPIO_ReadPin(button_GPIO_Port, button_Pin) == GPIO_PIN_RESET)
-  {
-    HAL_GPIO_WritePin(led_GPIO_Port, led_Pin, GPIO_PIN_RESET);
-  }
-  else
-  {
-    HAL_GPIO_WritePin(led_GPIO_Port, led_Pin, GPIO_PIN_SET);
-  }
+
   }
   /* USER CODE END 3 */
 }
@@ -167,6 +189,93 @@ void SystemClock_Config(void)
 }
 
 /**
+  * @brief I2C1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_I2C1_Init(void)
+{
+
+  /* USER CODE BEGIN I2C1_Init 0 */
+
+  /* USER CODE END I2C1_Init 0 */
+
+  /* USER CODE BEGIN I2C1_Init 1 */
+
+  /* USER CODE END I2C1_Init 1 */
+  hi2c1.Instance = I2C1;
+  hi2c1.Init.ClockSpeed = 100000;
+  hi2c1.Init.DutyCycle = I2C_DUTYCYCLE_2;
+  hi2c1.Init.OwnAddress1 = 0;
+  hi2c1.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
+  hi2c1.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
+  hi2c1.Init.OwnAddress2 = 0;
+  hi2c1.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
+  hi2c1.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
+  if (HAL_I2C_Init(&hi2c1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN I2C1_Init 2 */
+
+  /* USER CODE END I2C1_Init 2 */
+
+}
+
+/**
+  * @brief I2C2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_I2C2_Init(void)
+{
+
+  /* USER CODE BEGIN I2C2_Init 0 */
+
+  /* USER CODE END I2C2_Init 0 */
+
+  /* USER CODE BEGIN I2C2_Init 1 */
+
+  /* USER CODE END I2C2_Init 1 */
+  hi2c2.Instance = I2C2;
+  hi2c2.Init.ClockSpeed = 100000;
+  hi2c2.Init.DutyCycle = I2C_DUTYCYCLE_2;
+  hi2c2.Init.OwnAddress1 = 0;
+  hi2c2.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
+  hi2c2.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
+  hi2c2.Init.OwnAddress2 = 0;
+  hi2c2.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
+  hi2c2.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
+  if (HAL_I2C_Init(&hi2c2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN I2C2_Init 2 */
+
+  /* USER CODE END I2C2_Init 2 */
+
+}
+
+/**
+  * Enable DMA controller clock
+  */
+static void MX_DMA_Init(void)
+{
+
+  /* DMA controller clock enable */
+  __HAL_RCC_DMA1_CLK_ENABLE();
+
+  /* DMA interrupt init */
+  /* DMA1_Stream0_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Stream0_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Stream0_IRQn);
+  /* DMA1_Stream1_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Stream1_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Stream1_IRQn);
+
+}
+
+/**
   * @brief GPIO Initialization Function
   * @param None
   * @retval None
@@ -182,15 +291,10 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOH_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
+  __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(led_GPIO_Port, led_Pin, GPIO_PIN_SET);
-
-  /*Configure GPIO pin : button_Pin */
-  GPIO_InitStruct.Pin = button_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-  GPIO_InitStruct.Pull = GPIO_PULLUP;
-  HAL_GPIO_Init(button_GPIO_Port, &GPIO_InitStruct);
+  HAL_GPIO_WritePin(led_GPIO_Port, led_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin : led_Pin */
   GPIO_InitStruct.Pin = led_Pin;
@@ -198,6 +302,12 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(led_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : button_Pin */
+  GPIO_InitStruct.Pin = button_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  HAL_GPIO_Init(button_GPIO_Port, &GPIO_InitStruct);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
 
